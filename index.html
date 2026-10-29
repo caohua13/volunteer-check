@@ -163,10 +163,59 @@
     if (hash) card.appendChild(renderConfirm(hash));
     return card;
   }
-  /* ===== 确认核对状态（Supabase） ===== */
+  /* ===== 确认核对状态（Supabase，带超时 / 自动重试 / 本地离线队列） ===== */
   var SB_URL = 'https://yebqnmumrufkmubviirk.supabase.co';
   var SB_KEY = 'sb_publishable_k0yzjSc5OrCBxAskGB233Q_zgl16_pg';
   var SB_HDR = { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' };
+  var DONE_KEY = 'vc_done_v1', Q_KEY = 'vc_queue_v1';
+
+  function lsGet(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : JSON.parse(d); } catch (e) { return JSON.parse(d); } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function markDone(h) { var a = lsGet(DONE_KEY, '[]'); if (a.indexOf(h) < 0) { a.push(h); lsSet(DONE_KEY, a); } }
+  function isDone(h) { return lsGet(DONE_KEY, '[]').indexOf(h) >= 0; }
+  function queuePush(h) { var a = lsGet(Q_KEY, '[]'); if (a.indexOf(h) < 0) { a.push(h); lsSet(Q_KEY, a); } }
+  function queueDrop(hs) { lsSet(Q_KEY, lsGet(Q_KEY, '[]').filter(function (x) { return hs.indexOf(x) < 0; })); }
+
+  /* 带超时 + 指数退避重试的请求（跨境网络抖动自动兜住） */
+  function sbFetch(url, opts, tries, timeout) {
+    tries = tries || 3; timeout = timeout || 9000;
+    return new Promise(function (resolve, reject) {
+      (function attempt(n) {
+        var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, timeout);
+        var o = {}; for (var k in (opts || {})) o[k] = opts[k];
+        if (ctrl) o.signal = ctrl.signal;
+        fetch(url, o).then(function (r) {
+          clearTimeout(timer);
+          if (r.ok || r.status === 409) return resolve(r);       /* 409 = 已存在，也算成功 */
+          if (n < tries) { setTimeout(function () { attempt(n + 1); }, 600 * Math.pow(2, n - 1)); return; }
+          resolve(r);
+        }).catch(function (e) {
+          clearTimeout(timer);
+          if (n < tries) setTimeout(function () { attempt(n + 1); }, 600 * Math.pow(2, n - 1));
+          else reject(e);
+        });
+      })(1);
+    });
+  }
+
+  /* 把本地攒下的确认记录批量补交 */
+  function flushQueue() {
+    var q = lsGet(Q_KEY, '[]');
+    if (!q.length) return;
+    sbFetch(SB_URL + '/rest/v1/confirmations', {
+      method: 'POST',
+      headers: Object.assign({}, SB_HDR, { 'Prefer': 'resolution=merge-duplicates' }),
+      body: JSON.stringify(q.map(function (h) { return { id_hash: h }; }))
+    }, 2, 12000).then(function (r) {
+      if (r.ok || r.status === 409) { q.forEach(markDone); queueDrop(q); }
+    }).catch(function () {});
+  }
+
+  /* 页面一打开就先建好连接，省掉后面的握手延迟 */
+  try { sbFetch(SB_URL + '/rest/v1/confirmations?select=id_hash&limit=1', { headers: SB_HDR }, 1, 8000).catch(function () {}); } catch (e) {}
+  setTimeout(flushQueue, 1500);
+  window.addEventListener('online', flushQueue);
 
   function renderConfirm(hash) {
     var box = el('div', 'confirm-box');
@@ -174,55 +223,50 @@
     var cb = document.createElement('input');
     cb.type = 'checkbox'; cb.className = 'confirm-cb'; cb.id = 'confirmBox';
     label.appendChild(cb);
-    label.appendChild(document.createTextNode('我已核对，以上信息确认无误'));
+    label.appendChild(document.createTextNode('\u6211\u5df2\u6838\u5bf9\uff0c\u4ee5\u4e0a\u4fe1\u606f\u786e\u8ba4\u65e0\u8bef'));
     box.appendChild(label);
     var msg = el('p', 'confirm-msg', '');
     msg.id = 'confirmMsg';
     box.appendChild(msg);
 
-    function setDone() {
+    function setDone(txt) {
       cb.checked = true; cb.disabled = true;
       label.style.cursor = 'default';
       msg.className = 'confirm-msg ok';
-      msg.textContent = '\u2705 您已完成核对，感谢配合！';
+      msg.textContent = txt || '\u2705 \u60a8\u5df2\u5b8c\u6210\u6838\u5bf9\uff0c\u611f\u8c22\u914d\u5408\uff01';
     }
-    function setErr(t) {
-      cb.disabled = false; cb.checked = false;
-      msg.className = 'confirm-msg err';
-      msg.textContent = t;
+    function setPending() {
+      cb.checked = true; cb.disabled = true;
+      msg.className = 'confirm-msg';
+      msg.textContent = '\u63d0\u4ea4\u4e2d\u2026';
     }
-    /* 查询是否已确认 */
-    fetch(SB_URL + '/rest/v1/confirmations?select=id_hash&id_hash=eq.' + encodeURIComponent(hash), { headers: SB_HDR })
-      .then(function (r) { return r.ok ? r.json() : []; })
-      .then(function (arr) { if (arr && arr.length) setDone(); })
-      .catch(function () {});
+
+    if (isDone(hash)) { setDone(); }
+    else {
+      sbFetch(SB_URL + '/rest/v1/confirmations?select=id_hash&id_hash=eq.' + encodeURIComponent(hash), { headers: SB_HDR }, 2, 8000)
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (arr) { if (arr && arr.length) { markDone(hash); setDone(); } })
+        .catch(function () {});
+    }
 
     cb.addEventListener('change', function () {
       if (!cb.checked) return;
-      cb.disabled = true;
-      msg.className = 'confirm-msg';
-      msg.textContent = '提交中\u2026';
-      fetch(SB_URL + '/rest/v1/confirmations', {
+      setPending();
+      markDone(hash);    /* 本地立刻记住，避免重复提交 */
+      queuePush(hash);   /* 先入队，确保不丢 */
+      sbFetch(SB_URL + '/rest/v1/confirmations', {
         method: 'POST',
         headers: Object.assign({}, SB_HDR, { 'Prefer': 'resolution=merge-duplicates' }),
         body: JSON.stringify([{ id_hash: hash }])
-      }).then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
+      }, 3, 10000).then(function (r) {
+        if (!r.ok && r.status !== 409) throw new Error('HTTP ' + r.status);
+        queueDrop([hash]);
         setDone();
         try { if (window.umami) umami.track('confirm'); } catch (e) {}
       }).catch(function () {
-        setErr('提交失败，请检查网络后重试');
+        setDone('\u2705 \u5df2\u8bb0\u5f55\uff08\u7f51\u7edc\u8f83\u6162\uff0c\u4e0b\u6b21\u6253\u5f00\u4f1a\u81ea\u52a8\u540c\u6b65\uff09');
       });
     });
-    return box;
-  }
-
-  function renderMiss() {
-    var card = el('div', 'card miss-card');
-    card.appendChild(el('div', 'miss-icon', '🔍'));
-    card.appendChild(el('p', 'miss-text', '未查询到您的信息，请联系负责人核对身份证号是否有误'));
-    return card;
-  }
   function scrollToResult() {
     setTimeout(function () { try { resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { resultEl.scrollIntoView(); } }, 30);
   }
