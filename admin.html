@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#c8322b" />
+<meta name="robots" content="noindex,nofollow" />
+<title>核对进度 · 后台管理</title>
+<style>
+  :root{--red:#c8322b;--red-dark:#a82620;--red-soft:#fdeceb;--text:#1f1f1f;--muted:#8a8078;--line:#ece7e4;--bg:#f7f4f2;--ok:#1a7f37;--warn:#b5730a}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-tap-highlight-color:transparent}
+  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 4px 18px rgba(31,31,31,.05)}
+  h1{font-size:22px;margin:0 0 4px;letter-spacing:-.3px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 18px}
+  .login{padding:26px 20px;max-width:380px;margin:8vh auto}
+  .login input{width:100%;height:50px;padding:0 14px;border:1.5px solid var(--line);border-radius:12px;font-size:16px;outline:none;background:#fbfafa}
+  .login input:focus{border-color:var(--red)}
+  .login button{width:100%;height:50px;margin-top:14px;border:0;border-radius:12px;background:var(--red);color:#fff;font-size:16px;font-weight:700;letter-spacing:.1em;cursor:pointer}
+  .err{color:var(--red);font-size:13px;margin-top:10px;min-height:18px;font-weight:600}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+  .stat{padding:14px 10px;text-align:center;border-radius:14px;background:#fff;border:1px solid var(--line)}
+  .stat b{display:block;font-size:24px;line-height:1.2}
+  .stat span{display:block;font-size:12px;color:var(--muted);margin-top:4px}
+  .stat.pend b{color:var(--warn)}
+  .stat.done b{color:var(--ok)}
+  .bar{height:10px;border-radius:6px;background:#efe9e6;overflow:hidden;margin:6px 0 18px}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#e0574f,#c8322b);width:0;transition:width .4s}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .toolbar input{flex:1 1 180px;height:44px;padding:0 14px;border:1.5px solid var(--line);border-radius:12px;font-size:15px;outline:none;background:#fff}
+  .toolbar input:focus{border-color:var(--red)}
+  .toolbar select,.toolbar button{height:44px;padding:0 14px;border-radius:12px;border:1.5px solid var(--line);background:#fff;font-size:14px;font-weight:600;color:var(--text);cursor:pointer}
+  .toolbar button.primary{background:var(--red);border-color:var(--red);color:#fff}
+  .list{display:flex;flex-direction:column;gap:8px}
+  .item{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:#fff;border:1px solid var(--line)}
+  .item .nm{font-weight:700;font-size:15px;min-width:72px}
+  .item .meta{flex:1;font-size:12.5px;color:var(--muted);word-break:break-all}
+  .tag{font-size:11.5px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
+  .tag.ok{background:#e8f5ec;color:var(--ok)}
+  .tag.no{background:#fdf1e3;color:var(--warn)}
+  .leader{font-size:11px;color:var(--red);font-weight:700}
+  .empty{text-align:center;color:var(--muted);padding:40px 0;font-size:14px}
+  .foot{margin-top:16px;text-align:center;font-size:12px;color:var(--muted)}
+  @media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="loginBox" class="card login">
+    <h1>核对进度 · 后台</h1>
+    <p class="sub">请输入管理密码</p>
+    <input id="pwd" type="password" placeholder="管理密码" autocomplete="current-password" />
+    <button id="btnLogin">进入</button>
+    <p id="loginErr" class="err"></p>
+  </div>
+
+  <div id="app" hidden>
+    <h1>核对进度</h1>
+    <p class="sub" id="subline">加载中…</p>
+
+    <div class="stats">
+      <div class="stat"><b id="sTotal">-</b><span>总人数</span></div>
+      <div class="stat done"><b id="sDone">-</b><span>已确认</span></div>
+      <div class="stat pend"><b id="sPend">-</b><span>未确认</span></div>
+      <div class="stat"><b id="sRate">-</b><span>完成率</span></div>
+    </div>
+    <div class="bar"><i id="barFill"></i></div>
+
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="搜索姓名 / 学号 / 学院 / 岗位" />
+      <select id="filter">
+        <option value="pend">未确认</option>
+        <option value="done">已确认</option>
+        <option value="all">全部</option>
+      </select>
+      <button id="btnRefresh">刷新</button>
+      <button id="btnExport" class="primary">导出 CSV</button>
+    </div>
+
+    <div id="list" class="list"></div>
+    <p class="foot" id="foot"></p>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  'use strict';
+  var SB_URL = 'https://yebqnmumrufkmubviirk.supabase.co';
+  var SB_KEY = 'sb_publishable_k0yzjSc5OrCBxAskGB233Q_zgl16_pg';
+  var SB_HDR = { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY };
+  var PWD_HASH = 'd8995f58a5a85b3042d2309afbc8a628743c517fc49f382a134ed7a637ee5110';
+
+  var sha256 = function (ascii) {
+    function rightRotate(value, amount) { return (value >>> amount) | (value << (32 - amount)); }
+    var mathPow = Math.pow, maxWord = mathPow(2, 32), lengthProperty = 'length', i, j;
+    var result = '', words = [], asciiBitLength = ascii[lengthProperty] * 8;
+    var hash = sha256.h = sha256.h || [], k = sha256.k = sha256.k || [];
+    var primeCounter = k[lengthProperty], isComposite = {};
+    for (var candidate = 2; primeCounter < 64; candidate++) {
+      if (!isComposite[candidate]) {
+        for (i = 0; i < 313; i += candidate) isComposite[i] = candidate;
+        hash[primeCounter] = (mathPow(candidate, 0.5) * maxWord) | 0;
+        k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
+      }
+    }
+    ascii += '\x80';
+    while (ascii[lengthProperty] % 64 - 56) ascii += '\x00';
+    for (i = 0; i < ascii[lengthProperty]; i++) {
+      j = ascii.charCodeAt(i);
+      if (j >> 8) return '';
+      words[i >> 2] |= j << ((3 - i) % 4) * 8;
+    }
+    words[words[lengthProperty]] = (asciiBitLength / maxWord) | 0;
+    words[words[lengthProperty]] = asciiBitLength;
+    for (j = 0; j < words[lengthProperty];) {
+      var w = words.slice(j, (j += 16)), oldHash = hash;
+      hash = hash.slice(0, 8);
+      for (i = 0; i < 64; i++) {
+        var w15 = w[i - 15], w2 = w[i - 2], a = hash[0], e = hash[4];
+        var temp1 = hash[7] + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25))
+          + ((e & hash[5]) ^ (~e & hash[6])) + k[i]
+          + (w[i] = (i < 16) ? w[i] : (w[i - 16] + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3))
+            + w[i - 7] + (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10)))) | 0;
+        var temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22))
+          + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+        hash = [(temp1 + temp2) | 0].concat(hash);
+        hash[4] = (hash[4] + temp1) | 0;
+      }
+      for (i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+    }
+    for (i = 0; i < 8; i++) for (j = 3; j + 1; j--) {
+      var b = (hash[i] >> (j * 8)) & 255;
+      result += (b < 16 ? '0' : '') + b.toString(16);
+    }
+    return result;
+  };
+
+  var D = window.VOLUNTEER_DATA || { records: {} };
+  var REC = D.records || {};
+  var confMap = {};   /* hash -> confirmed_at */
+  var rows = [];      /* [{hash,name,isLeader,fields,at}] */
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function getField(rec, names) {
+    var f = rec.fields || [];
+    for (var i = 0; i < f.length; i++) {
+      if (!f[i] || f[i].length < 2) continue;
+      var k = String(f[i][0] || '');
+      for (var n = 0; n < names.length; n++) if (k.indexOf(names[n]) >= 0) return String(f[i][1] == null ? '' : f[i][1]);
+    }
+    return '';
+  }
+
+  function buildRows() {
+    rows = [];
+    for (var h in REC) {
+      if (!Object.prototype.hasOwnProperty.call(REC, h)) continue;
+      var r = REC[h];
+      rows.push({
+        hash: h, name: r.name || '（未填）', isLeader: r.isLeader === true,
+        college: getField(r, ['学院']), post: getField(r, ['岗位']), area: getField(r, ['区域']),
+        stuNo: getField(r, ['学号']),
+        at: confMap[h] || null
+      });
+    }
+    rows.sort(function (a, b) {
+      if (!!a.at !== !!b.at) return a.at ? 1 : -1;   /* 未确认在前 */
+      if (a.isLeader !== b.isLeader) return a.isLeader ? -1 : 1;
+      return a.name.localeCompare(b.name, 'zh');
+    });
+  }
+
+  function pull() {
+    return fetch(SB_URL + '/rest/v1/confirmations?select=id_hash,confirmed_at', { headers: SB_HDR })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (arr) {
+        confMap = {};
+        (arr || []).forEach(function (x) { confMap[x.id_hash] = x.confirmed_at; });
+      });
+  }
+
+  function render() {
+    var total = rows.length;
+    var done = rows.filter(function (r) { return !!r.at; }).length;
+    var pend = total - done;
+    var rate = total ? Math.round(done * 100 / total) : 0;
+    $('sTotal').textContent = total;
+    $('sDone').textContent = done;
+    $('sPend').textContent = pend;
+    $('sRate').textContent = rate + '%';
+    $('barFill').style.width = rate + '%';
+    $('subline').textContent = '数据日期 ' + ((D.meta && D.meta.updated) || '-') + ' · 最后更新 ' + new Date().toLocaleTimeString('zh-CN');
+
+    var kw = ($('q').value || '').trim().toLowerCase();
+    var mode = $('filter').value;
+    var list = rows.filter(function (r) {
+      if (mode === 'pend' && r.at) return false;
+      if (mode === 'done' && !r.at) return false;
+      if (!kw) return true;
+      return (r.name + ' ' + r.college + ' ' + r.post + ' ' + r.area + ' ' + r.stuNo).toLowerCase().indexOf(kw) >= 0;
+    });
+
+    var box = $('list');
+    box.innerHTML = '';
+    if (!list.length) {
+      box.innerHTML = '<div class="empty">没有匹配的记录</div>';
+    } else {
+      var frag = document.createDocumentFragment();
+      list.forEach(function (r) {
+        var d = document.createElement('div'); d.className = 'item';
+        var nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = r.name;
+        if (r.isLeader) { var b = document.createElement('div'); b.className = 'leader'; b.textContent = '★组长'; nm.appendChild(b); }
+        var meta = document.createElement('div'); meta.className = 'meta';
+        meta.textContent = [r.stuNo, r.college, r.area, r.post].filter(Boolean).join(' · ');
+        if (r.at) meta.textContent += ' ｜ ' + new Date(r.at).toLocaleString('zh-CN');
+        var tag = document.createElement('div');
+        tag.className = 'tag ' + (r.at ? 'ok' : 'no');
+        tag.textContent = r.at ? '已确认' : '未确认';
+        d.appendChild(nm); d.appendChild(meta); d.appendChild(tag);
+        frag.appendChild(d);
+      });
+      box.appendChild(frag);
+    }
+    $('foot').textContent = '显示 ' + list.length + ' / ' + total + ' 人';
+  }
+
+  function load() {
+    $('subline').textContent = '拉取确认状态…';
+    return pull().then(function () { buildRows(); render(); })
+      .catch(function (e) {
+        $('subline').textContent = '拉取失败：' + e.message + '（点刷新重试）';
+      });
+  }
+
+  function exportCsv() {
+    var head = ['姓名', '学号', '学院', '区域', '岗位', '是否组长', '确认状态', '确认时间'];
+    var lines = [head.join(',')];
+    rows.slice().sort(function (a, b) { return a.name.localeCompare(b.name, 'zh'); }).forEach(function (r) {
+      var cells = [r.name, r.stuNo, r.college, r.area, r.post, r.isLeader ? '是' : '', r.at ? '已确认' : '未确认',
+        r.at ? new Date(r.at).toLocaleString('zh-CN') : ''];
+      lines.push(cells.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','));
+    });
+    var blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '核对进度_' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 3000);
+  }
+
+  /* 登录 */
+  function enter() {
+    sessionStorage.setItem('vc_admin', '1');
+    $('loginBox').hidden = true;
+    $('app').hidden = false;
+    load();
+    setInterval(function () { if (!$('app').hidden) pull().then(function () { buildRows(); render(); }); }, 30000);
+  }
+  $('btnLogin').addEventListener('click', function () {
+    var v = $('pwd').value;
+    if (sha256(v) === PWD_HASH) { $('loginErr').textContent = ''; enter(); }
+    else { $('loginErr').textContent = '密码错误'; }
+  });
+  $('pwd').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('btnLogin').click(); });
+  if (sessionStorage.getItem('vc_admin') === '1') { enter(); }
+
+  $('btnRefresh').addEventListener('click', load);
+  $('btnExport').addEventListener('click', exportCsv);
+  $('q').addEventListener('input', render);
+  $('filter').addEventListener('change', render);
+})();
+</script>
+</body>
+</html>
